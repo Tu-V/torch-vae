@@ -1,5 +1,5 @@
 """
-Sample / reconstruct from a trained VAE on simple-shapes-16x16.
+Sample / reconstruct from a trained VAE on simple-shapes-16x16 (RGB).
 
 Usage:
     cd /Users/admin/workspace/torch-vae
@@ -11,27 +11,26 @@ import sys
 import torch
 import numpy as np
 from PIL import Image
-from torchvision import transforms
-from torch.utils.data import Dataset
 
 sys.path.insert(0, os.path.dirname(__file__))
 from train_simple_shapes import VAE, SimpleShapesDataset
 
 # ──────────────────────────────────────────────
-# Config
+# Config — must match training
 # ──────────────────────────────────────────────
 MODEL_PATH  = './models/simple-shapes/vae_simple_shapes_final.pth'
 DATASET_DIR = '/Users/admin/workspace/diffusion-model-hallucination/simple-datasets/simple-shapes-16x16'
 OUT_DIR     = './figures/simple-shapes-vae'
-LATENT_DIMS = 32
-NUM_FILTERS = 64
+LATENT_DIMS = 64
+C           = 128
+NUM_HEADS   = 4
 N_SAMPLES   = 64
 
 
-def save_img(arr, path):
-    """arr: numpy (H, W) float [0,1]"""
-    arr = np.clip(arr, 0.0, 1.0)
-    Image.fromarray((arr * 255).astype(np.uint8), mode='L').save(path)
+def to_pil(tensor):
+    """(3, H, W) float tensor [0,1] → PIL RGB image."""
+    arr = tensor.detach().cpu().clamp(0, 1).permute(1, 2, 0).numpy()
+    return Image.fromarray((arr * 255).astype(np.uint8), mode='RGB')
 
 
 if __name__ == '__main__':
@@ -40,7 +39,7 @@ if __name__ == '__main__':
     device = torch.device('cpu')
 
     # ── Load model ──
-    model = VAE.load(MODEL_PATH, latent_dims=LATENT_DIMS, num_filters=NUM_FILTERS, device=device)
+    model = VAE.load(MODEL_PATH, latent_dims=LATENT_DIMS, c=C, num_heads=NUM_HEADS, device=device)
     print(f'Loaded model from {MODEL_PATH}')
 
     # ── 1. Random samples from prior z ~ N(0, I) ──
@@ -48,11 +47,11 @@ if __name__ == '__main__':
     os.makedirs(samples_dir, exist_ok=True)
 
     with torch.no_grad():
-        z = torch.randn(N_SAMPLES, LATENT_DIMS)
-        generated = model.decode(z)   # (N, 1, 16, 16)
+        z = torch.randn(N_SAMPLES, LATENT_DIMS, device=device)
+        generated = model.decode(z)   # (N, 3, 16, 16)
 
-    for i, img in enumerate(generated):
-        save_img(img.squeeze(0).numpy(), os.path.join(samples_dir, f'{i:04d}.png'))
+    for i, img_t in enumerate(generated):
+        to_pil(img_t).save(os.path.join(samples_dir, f'{i:04d}.png'))
     print(f'Random samples ({N_SAMPLES}) -> {samples_dir}/')
 
     # ── 2. Reconstruct real images ──
@@ -61,14 +60,14 @@ if __name__ == '__main__':
 
     dataset = SimpleShapesDataset(DATASET_DIR)
     n_recon = 32
-    orig_batch = torch.stack([dataset[i][0] for i in range(n_recon)])  # (N, 1, 16, 16)
+    orig_batch = torch.stack([dataset[i][0] for i in range(n_recon)]).to(device)
 
     with torch.no_grad():
-        recon_batch = model(orig_batch)   # (N, 1, 16, 16)
+        recon_batch = model(orig_batch)   # (N, 3, 16, 16)
 
     for i in range(n_recon):
-        save_img(orig_batch[i].squeeze(0).numpy(),  os.path.join(recon_dir, f'{i:04d}_orig.png'))
-        save_img(recon_batch[i].squeeze(0).numpy(), os.path.join(recon_dir, f'{i:04d}_recon.png'))
+        to_pil(orig_batch[i]).save(os.path.join(recon_dir, f'{i:04d}_orig.png'))
+        to_pil(recon_batch[i]).save(os.path.join(recon_dir, f'{i:04d}_recon.png'))
     print(f'Reconstructions ({n_recon} pairs) -> {recon_dir}/')
 
     # ── 3. Interpolate between 2 random latent points ──
@@ -77,12 +76,12 @@ if __name__ == '__main__':
 
     n_steps = 10
     with torch.no_grad():
-        z_a = torch.randn(1, LATENT_DIMS)
-        z_b = torch.randn(1, LATENT_DIMS)
+        z_a = torch.randn(1, LATENT_DIMS, device=device)
+        z_b = torch.randn(1, LATENT_DIMS, device=device)
         for step, t in enumerate(np.linspace(0, 1, n_steps)):
             z_interp = (1 - t) * z_a + t * z_b
-            img = model.decode(z_interp).squeeze().numpy()
-            save_img(img, os.path.join(interp_dir, f'{step:02d}_t{t:.2f}.png'))
+            img_t = model.decode(z_interp).squeeze(0)   # (3, 16, 16)
+            to_pil(img_t).save(os.path.join(interp_dir, f'{step:02d}_t{t:.2f}.png'))
     print(f'Interpolation ({n_steps} steps) -> {interp_dir}/')
 
     print('\nDone.')
