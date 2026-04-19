@@ -43,7 +43,9 @@ NUM_HEADS   = 4
 BATCH_SIZE  = 256
 EPOCHS      = 300
 LR          = 2e-4
-KL_WEIGHT   = 0.001  # low beta → sharp reconstruction
+KL_WEIGHT_START  = 0.0001  # start very low → decoder learns to reconstruct first
+KL_WEIGHT_END    = 0.5     # end value → posterior converges toward N(0,1)
+KL_ANNEAL_EPOCHS = 200     # linearly anneal over first N epochs
 
 
 # ──────────────────────────────────────────────
@@ -238,22 +240,39 @@ class VAE(nn.Module):
 # ──────────────────────────────────────────────
 # Loss — BCE + KL
 # ──────────────────────────────────────────────
-def bce_kl_loss(x, x_recon, kl_div, beta=KL_WEIGHT):
+def bce_kl_loss(x, x_recon, kl_div, beta):
     recon = F.binary_cross_entropy(x_recon, x, reduction='sum')
     return recon + beta * kl_div
 
 
 # ──────────────────────────────────────────────
-# Trainer — save only every SAVE_EVERY epochs
+# Trainer — KL annealing + save every N epochs
 # ──────────────────────────────────────────────
-SAVE_EVERY = 50   # checkpoint every N epochs (adjust to manage disk usage)
+SAVE_EVERY = 50   # checkpoint every N epochs
 
-class PeriodicSaveTrainer(Trainer):
+class AnnealingTrainer(Trainer):
+    """Linearly anneals KL weight from KL_WEIGHT_START to KL_WEIGHT_END
+    over the first KL_ANNEAL_EPOCHS epochs, then keeps it at KL_WEIGHT_END."""
+
+    def _get_beta(self, epoch):
+        if KL_ANNEAL_EPOCHS == 0:
+            return KL_WEIGHT_END
+        t = min(epoch / KL_ANNEAL_EPOCHS, 1.0)
+        return KL_WEIGHT_START + t * (KL_WEIGHT_END - KL_WEIGHT_START)
+
+    def _train_epoch(self, epoch, train_loader):
+        beta = self._get_beta(epoch)
+        # patch loss_fn with current beta
+        self.loss_fn = lambda x, x_recon, kl: bce_kl_loss(x, x_recon, kl, beta=beta)
+        return super()._train_epoch(epoch, train_loader)
+
     def _on_epoch_end(self, epoch, num_train_samples, num_batches):
-        # skip the parent's per-epoch save; we handle it ourselves
-        self.metrics["epochEndTime"] = __import__('time').monotonic()
+        import time
+        self.metrics["epochEndTime"] = time.monotonic()
         self._update_metrics(epoch, num_train_samples)
         self._log_metrics(epoch)
+        beta = self._get_beta(epoch)
+        self.logger.info(f'  KL beta: {beta:.5f}\n')
         if (epoch + 1) % SAVE_EVERY == 0:
             self._save_model(self.fname_save_every_epoch, epoch)
 
@@ -289,11 +308,13 @@ if __name__ == '__main__':
     print(f'Model params: {n_params:,}')
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
-    loss_fn   = lambda x, x_recon, kl: bce_kl_loss(x, x_recon, kl, beta=KL_WEIGHT)
 
-    trainer = PeriodicSaveTrainer(
+    # placeholder — AnnealingTrainer overrides loss_fn each epoch with current beta
+    initial_loss_fn = lambda x, x_recon, kl: bce_kl_loss(x, x_recon, kl, beta=KL_WEIGHT_START)
+
+    trainer = AnnealingTrainer(
         model=model,
-        loss_fn=loss_fn,
+        loss_fn=initial_loss_fn,
         optimizer=optimizer,
         device=device,
         fname_save_every_epoch=os.path.join(MODEL_DIR, 'vae_simple_shapes'),
