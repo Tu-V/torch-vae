@@ -244,6 +244,21 @@ def bce_kl_loss(x, x_recon, kl_div, beta=KL_WEIGHT):
 
 
 # ──────────────────────────────────────────────
+# Trainer — save only every SAVE_EVERY epochs
+# ──────────────────────────────────────────────
+SAVE_EVERY = 50   # checkpoint every N epochs (adjust to manage disk usage)
+
+class PeriodicSaveTrainer(Trainer):
+    def _on_epoch_end(self, epoch, num_train_samples, num_batches):
+        # skip the parent's per-epoch save; we handle it ourselves
+        self.metrics["epochEndTime"] = __import__('time').monotonic()
+        self._update_metrics(epoch, num_train_samples)
+        self._log_metrics(epoch)
+        if (epoch + 1) % SAVE_EVERY == 0:
+            self._save_model(self.fname_save_every_epoch, epoch)
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 if __name__ == '__main__':
@@ -276,7 +291,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
     loss_fn   = lambda x, x_recon, kl: bce_kl_loss(x, x_recon, kl, beta=KL_WEIGHT)
 
-    trainer = Trainer(
+    trainer = PeriodicSaveTrainer(
         model=model,
         loss_fn=loss_fn,
         optimizer=optimizer,
