@@ -18,7 +18,7 @@ from train_simple_shapes import VAE, SimpleShapesDataset
 # ──────────────────────────────────────────────
 # Config — must match training
 # ──────────────────────────────────────────────
-MODEL_PATH  = './models/simple-shapes/vae_simple_shapes_final.pth'
+MODEL_PATH  = './models/simple-shapes/vae_simple_shapes_best.pth'
 DATASET_DIR = '/Users/admin/workspace/diffusion-model-hallucination/simple-datasets/simple-shapes-16x16'
 OUT_DIR     = './figures/simple-shapes-vae'
 LATENT_DIMS = 64
@@ -78,10 +78,18 @@ if __name__ == '__main__':
     with torch.no_grad():
         z_a = torch.randn(1, LATENT_DIMS, device=device)
         z_b = torch.randn(1, LATENT_DIMS, device=device)
-        for step, t in enumerate(np.linspace(0, 1, n_steps)):
+        frames = []
+        for t in np.linspace(0, 1, n_steps):
             z_interp = (1 - t) * z_a + t * z_b
             img_t = model.decode(z_interp).squeeze(0)   # (3, 16, 16)
-            to_pil(img_t).save(os.path.join(interp_dir, f'{step:02d}_t{t:.2f}.png'))
-    print(f'Interpolation ({n_steps} steps) -> {interp_dir}/')
+            frames.append(to_pil(img_t))
+
+    # xếp thành 1 hàng, ảnh đầu bên trái, ảnh cuối bên phải
+    W, H = frames[0].size
+    strip = Image.new('RGB', (W * n_steps, H))
+    for i, frame in enumerate(frames):
+        strip.paste(frame, (i * W, 0))
+    strip.save(os.path.join(interp_dir, 'interpolation_strip.png'))
+    print(f'Interpolation strip -> {interp_dir}/interpolation_strip.png')
 
     print('\nDone.')

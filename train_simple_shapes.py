@@ -266,6 +266,11 @@ class AnnealingTrainer(Trainer):
         self.loss_fn = lambda x, x_recon, kl: bce_kl_loss(x, x_recon, kl, beta=beta)
         return super()._train_epoch(epoch, train_loader)
 
+    def _on_train_begin(self, num_epochs):
+        super()._on_train_begin(num_epochs)
+        self._best_loss = float('inf')
+        self._best_epoch = -1
+
     def _on_epoch_end(self, epoch, num_train_samples, num_batches):
         import time
         self.metrics["epochEndTime"] = time.monotonic()
@@ -273,6 +278,16 @@ class AnnealingTrainer(Trainer):
         self._log_metrics(epoch)
         beta = self._get_beta(epoch)
         self.logger.info(f'  KL beta: {beta:.5f}\n')
+
+        # save best model
+        current_loss = self.metrics["epochTrainLoss"][epoch]
+        if current_loss < self._best_loss:
+            self._best_loss  = current_loss
+            self._best_epoch = epoch
+            self.model.save(self.fname_save_every_epoch + '_best.pth')
+            self.logger.info(f'  *** New best loss {current_loss:.4f} at epoch {epoch} — saved\n')
+
+        # periodic checkpoint
         if (epoch + 1) % SAVE_EVERY == 0:
             self._save_model(self.fname_save_every_epoch, epoch)
 
@@ -321,6 +336,4 @@ if __name__ == '__main__':
     )
     trainer.train(loader, None, num_epochs=EPOCHS)
 
-    final_path = os.path.join(MODEL_DIR, 'vae_simple_shapes_final.pth')
-    model.save(final_path)
-    print(f'\nDone. Final model -> {final_path}')
+    print(f'\nDone. Best model (epoch {trainer._best_epoch}, loss {trainer._best_loss:.4f}) -> {MODEL_DIR}/vae_simple_shapes_best.pth')
