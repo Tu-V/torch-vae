@@ -24,7 +24,7 @@ from torchvision import transforms
 from PIL import Image
 
 # ── import UNet building blocks from improved-diffusion ──
-sys.path.insert(0, '/Users/admin/workspace/improved-diffusion')
+sys.path.insert(0, '../improved-diffusion')
 from improved_diffusion.unet import ResBlock, AttentionBlock, Downsample, Upsample
 from improved_diffusion.nn import normalization, zero_module
 
@@ -34,9 +34,9 @@ from trainer import Trainer
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-DATASET_DIR = '/Users/admin/workspace/diffusion-model-hallucination/simple-datasets/simple-shapes-16x16'
-MODEL_DIR   = './models/simple-shapes'
-LATENT_DIMS = 64
+DATASET_DIR = '/Users/admin/workspace/diffusion_hallu/neurips-2024-diffusion-model-hallucination/simple-datasets/simple-shapes-5k-16x16'
+MODEL_DIR   = './models/simple-shapes-5k-16x16-latent_dim-2'
+LATENT_DIMS = 2
 C           = 128    # base channel width; encoder uses C → 2C → 4C
 DROPOUT     = 0.0
 NUM_HEADS   = 4
@@ -246,13 +246,17 @@ def bce_kl_loss(x, x_recon, kl_div, beta):
 
 
 # ──────────────────────────────────────────────
-# Trainer — KL annealing + save every N epochs
+# Trainer — KL annealing + top-K checkpoints + loss log
 # ──────────────────────────────────────────────
-SAVE_EVERY = 50   # checkpoint every N epochs
+SAVE_EVERY = 50   # periodic checkpoint every N epochs
+TOP_K_BEST = 10   # keep this many lowest-loss checkpoints on disk
 
 class AnnealingTrainer(Trainer):
     """Linearly anneals KL weight from KL_WEIGHT_START to KL_WEIGHT_END
-    over the first KL_ANNEAL_EPOCHS epochs, then keeps it at KL_WEIGHT_END."""
+    over the first KL_ANNEAL_EPOCHS epochs, then keeps it at KL_WEIGHT_END.
+
+    Also keeps the top-TOP_K_BEST checkpoints by training loss (filename
+    encodes the epoch and loss) and writes a per-epoch loss log CSV."""
 
     def _get_beta(self, epoch):
         if KL_ANNEAL_EPOCHS == 0:
@@ -270,6 +274,11 @@ class AnnealingTrainer(Trainer):
         super()._on_train_begin(num_epochs)
         self._best_loss = float('inf')
         self._best_epoch = -1
+        self._best_checkpoints = []  # [(loss, epoch, path), ...] sorted ascending by loss
+
+        self._loss_log_path = self.fname_save_every_epoch + '_loss_log.csv'
+        with open(self._loss_log_path, 'w') as f:
+            f.write('epoch,loss,beta,time_sec\n')
 
     def _on_epoch_end(self, epoch, num_train_samples, num_batches):
         import time
@@ -279,13 +288,32 @@ class AnnealingTrainer(Trainer):
         beta = self._get_beta(epoch)
         self.logger.info(f'  KL beta: {beta:.5f}\n')
 
-        # save best model
         current_loss = self.metrics["epochTrainLoss"][epoch]
+        time_taken   = self.metrics["epochEndTime"] - self.metrics["epochStartTime"]
+
+        # ── per-epoch loss log (epoch, loss, kl beta, time) ──
+        with open(self._loss_log_path, 'a') as f:
+            f.write(f'{epoch},{current_loss:.6f},{beta:.6f},{time_taken:.3f}\n')
+
+        # ── overall best (kept under the original fixed filename for downstream scripts) ──
         if current_loss < self._best_loss:
             self._best_loss  = current_loss
             self._best_epoch = epoch
             self.model.save(self.fname_save_every_epoch + '_best.pth')
             self.logger.info(f'  *** New best loss {current_loss:.4f} at epoch {epoch} — saved\n')
+
+        # ── top-K best checkpoints, filename encodes epoch + loss ──
+        if len(self._best_checkpoints) < TOP_K_BEST or current_loss < self._best_checkpoints[-1][0]:
+            fname = f'{self.fname_save_every_epoch}_top_ep{epoch:03d}_loss{current_loss:.4f}.pth'
+            self.model.save(fname)
+            self._best_checkpoints.append((current_loss, epoch, fname))
+            self._best_checkpoints.sort(key=lambda x: x[0])
+
+            if len(self._best_checkpoints) > TOP_K_BEST:
+                _, dropped_epoch, dropped_fname = self._best_checkpoints.pop()
+                if os.path.exists(dropped_fname):
+                    os.remove(dropped_fname)
+                self.logger.info(f'  top-{TOP_K_BEST} checkpoints updated, dropped epoch {dropped_epoch}\n')
 
         # periodic checkpoint
         if (epoch + 1) % SAVE_EVERY == 0:
@@ -337,3 +365,5 @@ if __name__ == '__main__':
     trainer.train(loader, None, num_epochs=EPOCHS)
 
     print(f'\nDone. Best model (epoch {trainer._best_epoch}, loss {trainer._best_loss:.4f}) -> {MODEL_DIR}/vae_simple_shapes_best.pth')
+    print(f'Top-{TOP_K_BEST} checkpoints (epoch + loss in filename) -> {MODEL_DIR}/vae_simple_shapes_top_*.pth')
+    print(f'Per-epoch loss log -> {trainer._loss_log_path}')
