@@ -21,8 +21,8 @@ from PIL import Image
 sys.path.insert(0, '/Users/admin/workspace/diffusion_hallu/flow_matching')
 from hallucination_detector import analyze_batch, summarize, COLUMN_NAMES
 
-SAMPLES_DIR = '/Users/admin/workspace/diffusion_hallu/torch-vae/figures/simple-shapes-5k-16x16-col0-only-latent_dim-1/random_samples'
-OUT_DIR     = '/Users/admin/workspace/diffusion_hallu/torch-vae/figures/simple-shapes-5k-16x16-col0-only-latent_dim-1'
+SAMPLES_DIR = './figures/simple-shapes-5k-16x16-vqvae/random_samples/'
+OUT_DIR     = './figures/simple-shapes-5k-16x16-vqvae'
 NUM_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 
