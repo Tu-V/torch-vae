@@ -34,9 +34,9 @@ from trainer import Trainer
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-DATASET_DIR = '/Users/admin/workspace/diffusion_hallu/neurips-2024-diffusion-model-hallucination/simple-datasets/simple-shapes-5k-16x16'
-MODEL_DIR   = './models/simple-shapes-5k-16x16-latent_dim-2'
-LATENT_DIMS = 2
+DATASET_DIR = '/Users/admin/workspace/diffusion_hallu/neurips-2024-diffusion-model-hallucination/simple-datasets/simple-shapes-5k-16x16-col0-only'
+MODEL_DIR   = './models/simple-shapes-5k-16x16-col0-only-latent_dim-1'
+LATENT_DIMS = 1
 C           = 128    # base channel width; encoder uses C → 2C → 4C
 DROPOUT     = 0.0
 NUM_HEADS   = 4
@@ -137,7 +137,8 @@ class Encoder(nn.Module):
         self.fc_mu    = nn.Linear(flat_dim, latent_dims)
         self.fc_lv    = nn.Linear(flat_dim, latent_dims)
 
-    def forward(self, x):
+    def encode_params(self, x):
+        """Return (mu, log_var) of q(z|x), without sampling."""
         h = self.stem(x)
         h = self.down1(h)
         h = self.down2(h)
@@ -146,6 +147,10 @@ class Encoder(nn.Module):
         h = self.act(self.norm_out(h)).flatten(1)
         mu      = self.fc_mu(h)
         log_var = self.fc_lv(h)
+        return mu, log_var
+
+    def forward(self, x):
+        mu, log_var = self.encode_params(x)
         eps = torch.randn_like(mu)
         z   = mu + eps * torch.exp(0.5 * log_var)
         kl  = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())

@@ -22,10 +22,10 @@ from train_simple_shapes import VAE, SimpleShapesDataset
 # ──────────────────────────────────────────────
 # Config — must match training
 # ──────────────────────────────────────────────
-MODEL_PATH  = './models/simple-shapes/vae_simple_shapes_best.pth'
+MODEL_PATH  = '/Users/admin/workspace/diffusion_hallu/torch-vae/models/simple-shapes-5k-16x16-col0-only-latent_dim-1/vae_simple_shapes_best.pth'
 DATASET_DIR = '/Users/admin/workspace/diffusion-model-hallucination/simple-datasets/simple-shapes-16x16'
-OUT_DIR     = './figures/simple-shapes-vae'
-LATENT_DIMS = 64
+OUT_DIR     = './figures/simple-shapes-5k-16x16-col0-only-latent_dim-1'
+LATENT_DIMS = 1
 C           = 128
 NUM_HEADS   = 4
 N_SAMPLES   = 100000
@@ -68,15 +68,17 @@ if __name__ == '__main__':
     samples_dir = os.path.join(OUT_DIR, 'random_samples')
     os.makedirs(samples_dir, exist_ok=True)
 
+    # different base seed every run -> different samples each time the script is run
+    base_seed = time.time_ns() % (2 ** 31)
     print(f'Sampling {N_SAMPLES} images using {NUM_WORKERS} worker processes '
-          f'(batch size {BATCH_SIZE})...')
+          f'(batch size {BATCH_SIZE}, base_seed={base_seed})...')
 
     counter = mp.Value('i', 0)
     chunk = N_SAMPLES // NUM_WORKERS
     procs, start = [], 0
     for w in range(NUM_WORKERS):
         count = chunk if w < NUM_WORKERS - 1 else N_SAMPLES - start
-        p = mp.Process(target=_sample_worker, args=(start, count, 1000 + w, samples_dir, counter))
+        p = mp.Process(target=_sample_worker, args=(start, count, base_seed + w, samples_dir, counter))
         p.start()
         procs.append(p)
         start += count
